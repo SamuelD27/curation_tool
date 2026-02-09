@@ -21,7 +21,9 @@ def main(verbose: bool):
 @click.option("--config", "-c", required=True, type=click.Path(exists=True), help="Path to YAML job config.")
 @click.option("--model-id", default="Qwen/Qwen-Image-Edit-2509", help="HuggingFace model ID.")
 @click.option("--device", default="cuda", help="Device to run on.")
-def run(config: str, model_id: str, device: str):
+@click.option("--export-lora", is_flag=True, help="Export as LoRA training dataset (image+caption pairs).")
+@click.option("--caption-template", default="{prompt}", help="Caption template. Use {prompt}, {source}, {seed}.")
+def run(config: str, model_id: str, device: str, export_lora: bool, caption_template: str):
     """Run a batch curation job from a YAML config file."""
     import torch
     from curation_tool.pipeline import load_pipeline
@@ -32,6 +34,12 @@ def run(config: str, model_id: str, device: str):
 
     pipeline = load_pipeline(model_id=model_id, device=device)
     results = run_batch(job, pipeline=pipeline)
+
+    if export_lora:
+        from curation_tool.dataset_export import export_lora_dataset
+        lora_dir = Path(job.output_dir) / "lora_dataset"
+        export_lora_dataset(results, lora_dir, caption_template=caption_template)
+        click.echo(f"LoRA dataset exported to {lora_dir}")
 
     click.echo(f"Done. {len(results)} images generated.")
 
