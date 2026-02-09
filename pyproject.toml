@@ -1,0 +1,8 @@
+[project]
+name = "curation-tool"
+version = "0.1.0"
+description = "Image dataset curation tool using Qwen-Image-Edit-2509"
+requires-python = ">=3.12"
+
+[project.scripts]
+curate = "curation_tool.cli:main"
