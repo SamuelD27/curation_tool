@@ -64,3 +64,13 @@ def edit(image: str, prompt: str, output: str, seed: int, steps: int, model_id: 
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     result.save(output)
     click.echo(f"Saved to {output}")
+
+
+@main.command()
+@click.option("--host", default="0.0.0.0", help="Host to bind to.")
+@click.option("--port", default=7860, type=int, help="Port to serve on.")
+@click.option("--share", is_flag=True, help="Create a public Gradio share link.")
+def gui(host: str, port: int, share: bool):
+    """Launch the Gradio web interface."""
+    from curation_tool.gui import launch
+    launch(host=host, port=port, share=share)
