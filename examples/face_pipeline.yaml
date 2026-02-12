@@ -1,0 +1,18 @@
+trigger_word: "sks_person"
+input_dir: ./examples/input
+output_dir: ./examples/face_output
+default_seed: 42
+default_num_steps: 50
+default_cfg_scale: 4.0
+
+stages:
+  - name: refine
+    type: refine
+    source_image: "base_photo.png"
+    num_candidates: 4
+    prompt: "Improve this photo to a perfect professional headshot, clean background, even lighting, sharp focus, centered face"
+    seeds: [42, 43, 44, 45]
+
+  - name: angles
+    type: angles
+    preset: "headshot_20"

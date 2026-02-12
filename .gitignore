@@ -18,3 +18,5 @@ models/
 *.egg-info/
 dist/
 build/
+examples/output/
+face_output/

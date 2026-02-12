@@ -10,9 +10,9 @@ class EditTask(BaseModel):
 
     source_image: str
     prompt: str
-    seed: int = 0
-    num_steps: int = 40
-    cfg_scale: float = 4.0
+    seed: int | None = None
+    num_steps: int | None = None
+    cfg_scale: float | None = None
     reference_images: list[str] = []
 
 

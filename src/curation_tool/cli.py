@@ -19,7 +19,7 @@ def main(verbose: bool):
 
 @main.command()
 @click.option("--config", "-c", required=True, type=click.Path(exists=True), help="Path to YAML job config.")
-@click.option("--model-id", default="Qwen/Qwen-Image-Edit-2509", help="HuggingFace model ID.")
+@click.option("--model-id", default="ovedrive/Qwen-Image-Edit-2509-4bit", help="HuggingFace model ID.")
 @click.option("--device", default="cuda", help="Device to run on.")
 @click.option("--export-lora", is_flag=True, help="Export as LoRA training dataset (image+caption pairs).")
 @click.option("--caption-template", default="{prompt}", help="Caption template. Use {prompt}, {source}, {seed}.")
@@ -50,7 +50,7 @@ def run(config: str, model_id: str, device: str, export_lora: bool, caption_temp
 @click.option("--output", "-o", default="output.png", help="Output image path.")
 @click.option("--seed", default=0, type=int, help="Random seed.")
 @click.option("--steps", default=40, type=int, help="Inference steps.")
-@click.option("--model-id", default="Qwen/Qwen-Image-Edit-2509", help="HuggingFace model ID.")
+@click.option("--model-id", default="ovedrive/Qwen-Image-Edit-2509-4bit", help="HuggingFace model ID.")
 def edit(image: str, prompt: str, output: str, seed: int, steps: int, model_id: str):
     """Edit a single image with a text prompt."""
     import torch
@@ -59,10 +59,10 @@ def edit(image: str, prompt: str, output: str, seed: int, steps: int, model_id: 
 
     pipeline = load_pipeline(model_id=model_id)
     img = PILImage.open(image).convert("RGB")
-    result = run_edit(pipeline, images=[img], prompt=prompt, seed=seed, num_steps=steps)
+    results = run_edit(pipeline, images=[img], prompt=prompt, seed=seed, num_steps=steps)
 
     Path(output).parent.mkdir(parents=True, exist_ok=True)
-    result.save(output)
+    results[0].save(output)
     click.echo(f"Saved to {output}")
 
 
@@ -74,3 +74,90 @@ def gui(host: str, port: int, share: bool):
     """Launch the Gradio web interface."""
     from curation_tool.gui import launch
     launch(host=host, port=port, share=share)
+
+
+# --- Face pipeline commands ---
+
+@main.group()
+def face():
+    """Multi-stage face dataset generation pipeline."""
+    pass
+
+
+@face.command("run")
+@click.option("--config", "-c", required=True, type=click.Path(exists=True), help="Path to face pipeline YAML config.")
+@click.option("--model-id", default=None, help="Override model ID from config.")
+@click.option("--pick", multiple=True, help="Pre-supply picks as stage=path (e.g. --pick refine=chosen.png).")
+@click.option("--no-interactive", is_flag=True, help="Disable interactive prompts (pause instead).")
+def face_run(config: str, model_id: str | None, pick: tuple[str, ...], no_interactive: bool):
+    """Run the face dataset pipeline from a YAML config."""
+    from curation_tool.face_pipeline import FacePipelineConfig, run_face_pipeline, export_face_dataset
+    from curation_tool.pipeline import load_pipeline
+
+    cfg = FacePipelineConfig.from_yaml(Path(config))
+    if model_id:
+        cfg.model_id = model_id
+
+    picks = _parse_picks(pick)
+    pipeline = load_pipeline(model_id=cfg.model_id)
+
+    results = run_face_pipeline(
+        cfg,
+        pipeline=pipeline,
+        interactive=not no_interactive,
+        picks=picks,
+    )
+
+    if results:
+        export_dir = export_face_dataset(cfg, results)
+        click.echo(f"LoRA dataset exported to {export_dir}")
+
+    click.echo(f"Done. {len(results)} dataset images generated.")
+
+
+@face.command("resume")
+@click.option("--config", "-c", required=True, type=click.Path(exists=True), help="Path to face pipeline YAML config.")
+@click.option("--pick", multiple=True, help="Supply picks as stage=path (e.g. --pick refine=chosen.png).")
+def face_resume(config: str, pick: tuple[str, ...]):
+    """Resume a paused face pipeline with picks."""
+    from curation_tool.face_pipeline import FacePipelineConfig, run_face_pipeline, export_face_dataset
+    from curation_tool.pipeline import load_pipeline
+
+    cfg = FacePipelineConfig.from_yaml(Path(config))
+    picks = _parse_picks(pick)
+    pipeline = load_pipeline(model_id=cfg.model_id)
+
+    results = run_face_pipeline(
+        cfg,
+        pipeline=pipeline,
+        interactive=False,
+        picks=picks,
+    )
+
+    if results:
+        export_dir = export_face_dataset(cfg, results)
+        click.echo(f"LoRA dataset exported to {export_dir}")
+
+    click.echo(f"Done. {len(results)} dataset images generated.")
+
+
+@face.command("presets")
+def face_presets():
+    """List available prompt presets."""
+    from curation_tool.presets import PRESETS
+
+    for name, prompts in sorted(PRESETS.items()):
+        click.echo(f"\n{name} ({len(prompts)} prompts):")
+        for i, p in enumerate(prompts):
+            click.echo(f"  [{i:2d}] {p.prompt}")
+
+
+def _parse_picks(pick_args: tuple[str, ...]) -> dict[str, str]:
+    """Parse --pick stage=path arguments into a dict."""
+    picks = {}
+    for item in pick_args:
+        if "=" not in item:
+            raise click.BadParameter(f"Pick must be stage=path, got: {item}")
+        stage_name, path = item.split("=", 1)
+        picks[stage_name] = path
+    return picks

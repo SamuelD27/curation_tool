@@ -37,9 +37,9 @@ def run_batch(
                 ref_img = Image.open(input_dir / ref).convert("RGB")
                 images.append(ref_img)
 
-            seed = task.seed or job.default_seed
-            num_steps = task.num_steps or job.default_num_steps
-            cfg_scale = task.cfg_scale or job.default_cfg_scale
+            seed = task.seed if task.seed is not None else job.default_seed
+            num_steps = task.num_steps if task.num_steps is not None else job.default_num_steps
+            cfg_scale = task.cfg_scale if task.cfg_scale is not None else job.default_cfg_scale
 
             inputs = {
                 "image": images,

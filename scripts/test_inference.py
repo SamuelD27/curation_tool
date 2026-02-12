@@ -18,16 +18,16 @@ def main():
 
     pipeline = load_pipeline()
 
-    result = run_edit(
+    results = run_edit(
         pipeline=pipeline,
         images=[test_img],
         prompt="Transform this into a beautiful sunset landscape with mountains.",
         seed=42,
         num_steps=40,
     )
-    result.save(output_dir / "output.png")
+    results[0].save(output_dir / "output.png")
     print(f"Saved to {output_dir / 'output.png'}")
-    print(f"Output size: {result.size}")
+    print(f"Output size: {results[0].size}")
 
 
 if __name__ == "__main__":

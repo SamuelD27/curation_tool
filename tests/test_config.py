@@ -10,8 +10,8 @@ def test_edit_task_minimal():
     )
     assert task.source_image == "input.png"
     assert task.prompt == "Make the background blue"
-    assert task.seed == 0
-    assert task.num_steps == 40
+    assert task.seed is None
+    assert task.num_steps is None
 
 
 def test_curation_job_from_yaml(tmp_path):

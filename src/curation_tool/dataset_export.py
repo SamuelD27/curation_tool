@@ -10,6 +10,7 @@ def export_lora_dataset(
     results: list[dict],
     export_dir: Path,
     caption_template: str = "{prompt}",
+    trigger_word: str | None = None,
 ) -> Path:
     """Export batch results as image+caption pairs for LoRA training.
 
@@ -29,7 +30,7 @@ def export_lora_dataset(
 
         shutil.copy2(src, dst_img)
 
-        caption = caption_template.format(**record)
+        caption = trigger_word if trigger_word else caption_template.format(**record)
         dst_txt.write_text(caption.strip() + "\n")
 
     logger.info("Exported %d image+caption pairs to %s", len(results), export_dir)
