@@ -1,0 +1,112 @@
+{
+  "37": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+      "weight_dtype": "fp8_e4m3fn"
+    }
+  },
+  "38": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    }
+  },
+  "39": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    }
+  },
+  "89": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": ["37", 0],
+      "lora_name": "Qwen-Image-Lightning-4steps-V1.0.safetensors",
+      "strength_model": 0.8
+    }
+  },
+  "66": {
+    "class_type": "ModelSamplingAuraFlow",
+    "inputs": {
+      "model": ["89", 0],
+      "shift": 3
+    }
+  },
+  "366": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "source.png"
+    }
+  },
+  "126": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "image": ["366", 0],
+      "upscale_method": "lanczos",
+      "megapixels": 1.0
+    }
+  },
+  "177": {
+    "class_type": "GetImageSize",
+    "inputs": {
+      "image": ["126", 0]
+    }
+  },
+  "176": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": ["177", 0],
+      "height": ["177", 1],
+      "batch_size": 1
+    }
+  },
+  "174": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": {
+      "clip": ["38", 0],
+      "vae": ["39", 0],
+      "image1": ["126", 0],
+      "prompt": ""
+    }
+  },
+  "111": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["38", 0],
+      "text": ""
+    }
+  },
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["66", 0],
+      "positive": ["174", 0],
+      "negative": ["111", 0],
+      "latent_image": ["176", 0],
+      "seed": 0,
+      "control_after_generate": "fixed",
+      "steps": 6,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "beta",
+      "denoise": 1
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["3", 0],
+      "vae": ["39", 0]
+    }
+  },
+  "10": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["8", 0],
+      "filename_prefix": "curation_tool"
+    }
+  }
+}

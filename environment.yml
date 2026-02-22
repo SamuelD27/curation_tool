@@ -6,14 +6,12 @@ dependencies:
   - python=3.12
   - pip
   - pip:
-    - --extra-index-url https://download.pytorch.org/whl/nightly/cu130
-    - torch
     - pillow
     - pydantic>=2.0
     - click
     - tqdm
-    - accelerate
-    - transformers>=4.51.3
-    - sentencepiece
-    - protobuf
-    - "diffusers @ git+https://github.com/huggingface/diffusers"
+    - pyyaml
+    - httpx
+    - websocket-client
+    - gradio
+    - pytest

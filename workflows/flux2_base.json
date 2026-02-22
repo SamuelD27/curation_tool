@@ -1,0 +1,162 @@
+{
+  "4": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "flux2-dev.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "10": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "mistral_3_small_flux2_fp8.safetensors",
+      "type": "flux2",
+      "device": "default"
+    }
+  },
+  "11": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "flux2-ae.safetensors"
+    }
+  },
+  "100": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "reference.png"
+    }
+  },
+  "5": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "batch_size": 1,
+      "height": 1024,
+      "width": 1024
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["10", 0],
+      "text": ""
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["10", 0],
+      "text": ""
+    }
+  },
+  "20": {
+    "class_type": "FluxGuidance",
+    "inputs": {
+      "conditioning": ["6", 0],
+      "guidance": 3.0
+    }
+  },
+  "12": {
+    "class_type": "PulidFluxModelLoader",
+    "inputs": {
+      "pulid_file": "pulid_flux_v0.9.1.safetensors"
+    }
+  },
+  "13": {
+    "class_type": "PulidFluxInsightFaceLoader",
+    "inputs": {
+      "provider": "CUDA"
+    }
+  },
+  "19": {
+    "class_type": "PulidFluxEvaClipLoader",
+    "inputs": {}
+  },
+  "21": {
+    "class_type": "RescaleCFG",
+    "inputs": {
+      "model": ["4", 0],
+      "multiplier": 0.7
+    }
+  },
+  "25": {
+    "class_type": "PerturbedAttention",
+    "inputs": {
+      "model": ["21", 0],
+      "scale": 1.5,
+      "adaptive_scale": 0.5,
+      "unet_block": "middle",
+      "unet_block_id": 0,
+      "sigma_start": -1,
+      "sigma_end": -1,
+      "rescale": 0.0,
+      "rescale_mode": "full"
+    }
+  },
+  "14": {
+    "class_type": "ApplyPulidFlux",
+    "inputs": {
+      "model": ["25", 0],
+      "pulid_flux": ["12", 0],
+      "eva_clip": ["19", 0],
+      "face_analysis": ["13", 0],
+      "image": ["100", 0],
+      "weight": 0.8,
+      "start_at": 0.0,
+      "end_at": 0.8
+    }
+  },
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": ["5", 0],
+      "model": ["14", 0],
+      "negative": ["7", 0],
+      "positive": ["20", 0],
+      "sampler_name": "euler",
+      "scheduler": "beta",
+      "seed": 0,
+      "steps": 28
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["3", 0],
+      "vae": ["11", 0]
+    }
+  },
+  "16": {
+    "class_type": "FaceRestoreModelLoader",
+    "inputs": {
+      "model_name": "codeformer.pth"
+    }
+  },
+  "15": {
+    "class_type": "FaceRestoreCFWithModel",
+    "inputs": {
+      "facerestore_model": ["16", 0],
+      "image": ["8", 0],
+      "facedetection": "retinaface_resnet50",
+      "codeformer_fidelity": 0.8
+    }
+  },
+  "200": {
+    "class_type": "CR Prompt List",
+    "inputs": {
+      "body_text": "",
+      "prepend_text": "",
+      "append_text": ""
+    }
+  },
+  "9": {
+    "class_type": "SaveImageKJ",
+    "inputs": {
+      "images": ["15", 0],
+      "caption": ["200", 0],
+      "filename_prefix": "curation_tool",
+      "extension": "txt"
+    }
+  }
+}

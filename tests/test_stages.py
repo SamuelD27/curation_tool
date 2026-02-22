@@ -1,7 +1,7 @@
 """Tests for stage config and task expansion."""
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from PIL import Image
@@ -114,18 +114,16 @@ class TestExpandStageTasks:
 
 
 class TestRunStage:
-    def test_run_stage_creates_outputs(self, tmp_path):
+    @patch("curation_tool.stages.run_edit")
+    def test_run_stage_creates_outputs(self, mock_run_edit, tmp_path):
+        mock_run_edit.return_value = [Image.new("RGB", (64, 64), color=(255, 0, 0))]
+
         input_dir = tmp_path / "input"
         input_dir.mkdir()
         source = input_dir / "photo.png"
         Image.new("RGB", (64, 64)).save(source)
 
         output_dir = tmp_path / "output"
-
-        mock_pipeline = MagicMock()
-        mock_output = MagicMock()
-        mock_output.images = [Image.new("RGB", (64, 64), color=(255, 0, 0))]
-        mock_pipeline.return_value = mock_output
 
         stage = StageConfig(
             name="refine",
@@ -140,7 +138,7 @@ class TestRunStage:
             source_image_path=source,
             input_dir=input_dir,
             output_dir=output_dir,
-            pipeline=mock_pipeline,
+            comfyui_url="http://test:8188",
         )
 
         assert len(results) == 2

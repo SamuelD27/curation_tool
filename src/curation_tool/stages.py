@@ -4,11 +4,11 @@ import logging
 from pathlib import Path
 from typing import Literal
 
-import torch
 from PIL import Image
 from pydantic import BaseModel
 
 from curation_tool.config import EditTask
+from curation_tool.pipeline import run_edit
 from curation_tool.presets import get_preset
 
 logger = logging.getLogger(__name__)
@@ -33,8 +33,8 @@ def expand_stage_tasks(
     stage: StageConfig,
     source_image: str,
     base_seed: int = 42,
-    default_num_steps: int = 50,
-    default_cfg_scale: float = 4.0,
+    default_num_steps: int = 30,
+    default_cfg_scale: float = 3.5,
 ) -> list[EditTask]:
     """Expand a stage config into concrete EditTasks. Pure function, no I/O."""
     num_steps = stage.num_steps if stage.num_steps is not None else default_num_steps
@@ -43,7 +43,7 @@ def expand_stage_tasks(
 
     if stage.type == "refine":
         seeds = stage.seeds or [base_seed + i for i in range(stage.num_candidates)]
-        prompt = stage.prompt or "Improve this photo to a perfect professional headshot"
+        prompt = stage.prompt or "Professional headshot portrait, facing directly forward, centered composition, sharp focus, studio lighting, clean neutral background, 85mm lens"
         return [
             EditTask(
                 source_image=src,
@@ -93,10 +93,12 @@ def run_stage(
     source_image_path: Path,
     input_dir: Path,
     output_dir: Path,
-    pipeline,
+    comfyui_url: str = "http://127.0.0.1:8188",
     base_seed: int = 42,
-    default_num_steps: int = 50,
-    default_cfg_scale: float = 4.0,
+    default_num_steps: int = 30,
+    default_cfg_scale: float = 3.5,
+    template: str = "qwen_face_edit",
+    reference_image: Image.Image | None = None,
 ) -> list[dict]:
     """Run a single stage: expand tasks, call pipeline, save outputs + metadata."""
     stage_dir = output_dir / f"stage_{stage.name}"
@@ -111,30 +113,28 @@ def run_stage(
     )
 
     source_img = Image.open(source_image_path).convert("RGB")
+    # Use source as reference for identity preservation if not explicitly provided
+    ref_img = reference_image if reference_image is not None else source_img
+
     results = []
     metadata_path = stage_dir / "metadata.jsonl"
 
     with open(metadata_path, "w") as meta_f:
         for i, task in enumerate(tasks):
-            images = [source_img]
-
-            inputs = {
-                "image": images,
-                "prompt": task.prompt,
-                "generator": torch.manual_seed(task.seed),
-                "true_cfg_scale": task.cfg_scale,
-                "negative_prompt": "blurry, low quality, distorted, deformed, artifacts",
-                "num_inference_steps": task.num_steps,
-                "guidance_scale": 1.0,
-                "num_images_per_prompt": 1,
-            }
-
-            with torch.inference_mode():
-                output = pipeline(**inputs)
+            generated = run_edit(
+                images=[source_img],
+                prompt=task.prompt,
+                seed=task.seed,
+                num_steps=task.num_steps,
+                cfg_scale=task.cfg_scale,
+                template=template,
+                reference_image=ref_img,
+                comfyui_url=comfyui_url,
+            )
 
             out_name = f"{stage.name}_{i:04d}.png"
             out_path = stage_dir / out_name
-            output.images[0].save(out_path)
+            generated[0].save(out_path)
 
             record = {
                 "index": i,

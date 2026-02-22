@@ -1,12 +1,12 @@
 """Multi-stage face dataset generation pipeline with pause/resume."""
 import json
 import logging
-import shutil
 from pathlib import Path
 
 import yaml
 from pydantic import BaseModel
 
+from curation_tool.config import ComfyUISettings, WorkflowSettings
 from curation_tool.stages import StageConfig, run_stage
 
 logger = logging.getLogger(__name__)
@@ -16,12 +16,14 @@ class FacePipelineConfig(BaseModel):
     """Top-level config for the face dataset pipeline."""
 
     trigger_word: str = "sks_person"
+    caption_template: str = "{prompt}"
     input_dir: str = "./input"
     output_dir: str = "./output"
-    model_id: str = "ovedrive/Qwen-Image-Edit-2509-4bit"
+    comfyui: ComfyUISettings = ComfyUISettings()
+    workflow: WorkflowSettings = WorkflowSettings()
     default_seed: int = 42
-    default_num_steps: int = 50
-    default_cfg_scale: float = 4.0
+    default_num_steps: int = 6
+    default_cfg_scale: float = 3.5
     stages: list[StageConfig]
 
     @classmethod
@@ -72,7 +74,7 @@ def _resolve_source(
 
 def run_face_pipeline(
     config: FacePipelineConfig,
-    pipeline=None,
+    comfyui_url: str | None = None,
     interactive: bool = True,
     picks: dict[str, str] | None = None,
 ) -> list[dict]:
@@ -80,7 +82,7 @@ def run_face_pipeline(
 
     Args:
         config: Pipeline configuration.
-        pipeline: Loaded diffusion pipeline (or mock for testing).
+        comfyui_url: ComfyUI server URL (overrides config.comfyui).
         interactive: If True, pause for user picks via click.prompt().
         picks: Pre-supplied picks for scripted mode (stage_name -> image_path).
 
@@ -88,6 +90,8 @@ def run_face_pipeline(
         All results from non-refine stages (the final dataset images).
     """
     picks = picks or {}
+    url = comfyui_url or config.comfyui.url
+    template = config.workflow.template
     output_dir = Path(config.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -99,6 +103,8 @@ def run_face_pipeline(
         state = PipelineState()
 
     all_results = []
+    # Track the picked reference image for identity preservation across stages
+    reference_image = None
 
     for stage in config.stages:
         if stage.name in state.completed_stages:
@@ -113,10 +119,12 @@ def run_face_pipeline(
             source_image_path=source_path,
             input_dir=Path(config.input_dir),
             output_dir=output_dir,
-            pipeline=pipeline,
+            comfyui_url=url,
             base_seed=config.default_seed,
             default_num_steps=config.default_num_steps,
             default_cfg_scale=config.default_cfg_scale,
+            template=template,
+            reference_image=reference_image,
         )
 
         state.completed_stages.append(stage.name)
@@ -136,6 +144,9 @@ def run_face_pipeline(
 
             state.current_source = str(pick_path)
             state.picks[stage.name] = str(pick_path)
+            # Load picked image as reference for subsequent identity-preserving stages
+            from PIL import Image
+            reference_image = Image.open(pick_path).convert("RGB")
         else:
             all_results.extend(results)
 
@@ -206,21 +217,20 @@ def _handle_refine_pick(
 def export_face_dataset(
     config: FacePipelineConfig,
     results: list[dict],
+    caption_template: str | None = None,
 ) -> Path:
-    """Export pipeline results as LoRA dataset with trigger-word captions."""
+    """Export pipeline results as LoRA dataset with image+caption pairs.
+
+    Uses the same export logic as the basic batch workflow.
+    Caption is determined by trigger_word (if set) or caption_template.
+    """
+    from curation_tool.dataset_export import export_lora_dataset
+
     export_dir = Path(config.output_dir) / "lora_dataset"
-    export_dir.mkdir(parents=True, exist_ok=True)
-
-    for i, record in enumerate(results):
-        src = Path(record["output_path"])
-        dst_img = export_dir / f"{i:05d}.png"
-        dst_txt = export_dir / f"{i:05d}.txt"
-
-        shutil.copy2(src, dst_img)
-        dst_txt.write_text(config.trigger_word + "\n")
-
-    logger.info(
-        "Exported %d images with trigger word '%s' to %s",
-        len(results), config.trigger_word, export_dir,
+    template = caption_template or config.caption_template
+    return export_lora_dataset(
+        results,
+        export_dir,
+        caption_template=template,
+        trigger_word=config.trigger_word,
     )
-    return export_dir

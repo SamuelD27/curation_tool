@@ -20,3 +20,6 @@ dist/
 build/
 examples/output/
 face_output/
+legacy/
+logs/
+modifs.md

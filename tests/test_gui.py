@@ -10,21 +10,14 @@ def test_build_app_creates_blocks():
     assert app is not None
 
 
-def test_generate_rejects_no_images():
-    with pytest.raises(Exception):
-        generate(None, None, None, "some prompt", 0, 40, 4.0)
-
-
 def test_generate_rejects_empty_prompt():
-    img = Image.new("RGB", (64, 64))
     with pytest.raises(Exception):
-        generate(img, None, None, "", 0, 40, 4.0)
+        generate("http://test:8188", None, "", "", 0, 30, 3.5, 1, "flux_base", 0.8)
 
 
 def test_build_app_has_face_pipeline_tab():
     """Verify the app contains both Single Edit and Face Pipeline tabs."""
     app = build_app()
-    # Walk the Blocks tree to find Tab components
     tab_labels = []
     for block in app.blocks.values():
         if hasattr(block, "label") and block.__class__.__name__ == "Tab":
@@ -37,13 +30,15 @@ def test_run_refine_stage_validates_no_image():
     """run_refine_stage raises when no base image is provided."""
     with pytest.raises(Exception, match="Upload a base photo"):
         run_refine_stage(
+            comfyui_url="http://test:8188",
             base_image=None,
             output_dir="./test_output",
             prompt="test prompt",
             num_candidates=2,
             seed=42,
             steps=10,
-            cfg=4.0,
+            cfg=3.5,
+            template="qwen_face_edit",
         )
 
 
@@ -57,6 +52,7 @@ def test_pick_candidate_updates_state():
             {"index": 0, "output_path": "/tmp/test/stage_refine/refine_0000.png", "seed": 42},
             {"index": 1, "output_path": "/tmp/test/stage_refine/refine_0001.png", "seed": 43},
         ],
+        "comfyui_url": "http://test:8188",
     }
 
     # Simulate a gr.SelectData event
@@ -66,6 +62,5 @@ def test_pick_candidate_updates_state():
     picked_path, new_state = pick_candidate(FakeSelectData(), state)
     assert picked_path == "/tmp/test/stage_refine/refine_0001.png"
     assert new_state["picked_image_path"] == "/tmp/test/stage_refine/refine_0001.png"
-    # Original state keys preserved
     assert new_state["stage_dir"] == "/tmp/test"
     assert len(new_state["refine_results"]) == 2

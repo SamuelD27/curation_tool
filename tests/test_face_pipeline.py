@@ -1,7 +1,7 @@
 """Tests for multi-stage face pipeline."""
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from PIL import Image
@@ -13,14 +13,6 @@ from curation_tool.face_pipeline import (
     run_face_pipeline,
 )
 from curation_tool.stages import StageConfig
-
-
-def _make_mock_pipeline():
-    mock = MagicMock()
-    mock_output = MagicMock()
-    mock_output.images = [Image.new("RGB", (64, 64), color=(255, 0, 0))]
-    mock.return_value = mock_output
-    return mock
 
 
 class TestFacePipelineConfig:
@@ -53,7 +45,14 @@ stages:
         )
         assert config.trigger_word == "sks_person"
         assert config.default_seed == 42
-        assert config.default_num_steps == 50
+        assert config.default_num_steps == 6
+        assert config.comfyui.port == 8188
+
+    def test_comfyui_url_property(self):
+        config = FacePipelineConfig(
+            stages=[StageConfig(name="test", type="refine")]
+        )
+        assert config.comfyui.url == "http://127.0.0.1:8188"
 
 
 class TestPipelineState:
@@ -79,7 +78,10 @@ class TestPipelineState:
 
 
 class TestRunFacePipeline:
-    def test_refine_then_angles_with_pick(self, tmp_path):
+    @patch("curation_tool.stages.run_edit")
+    def test_refine_then_angles_with_pick(self, mock_run_edit, tmp_path):
+        mock_run_edit.return_value = [Image.new("RGB", (64, 64), color=(255, 0, 0))]
+
         input_dir = tmp_path / "input"
         input_dir.mkdir()
         source = input_dir / "photo.png"
@@ -108,12 +110,10 @@ class TestRunFacePipeline:
             ],
         )
 
-        mock_pipeline = _make_mock_pipeline()
-
         # Pre-supply the pick so it doesn't pause
         results = run_face_pipeline(
             config,
-            pipeline=mock_pipeline,
+            comfyui_url="http://test:8188",
             interactive=False,
             picks={"refine": "refine_0000.png"},
         )
@@ -129,7 +129,10 @@ class TestRunFacePipeline:
         assert "refine" in state.completed_stages
         assert "angles" in state.completed_stages
 
-    def test_pauses_without_pick(self, tmp_path):
+    @patch("curation_tool.stages.run_edit")
+    def test_pauses_without_pick(self, mock_run_edit, tmp_path):
+        mock_run_edit.return_value = [Image.new("RGB", (64, 64), color=(255, 0, 0))]
+
         input_dir = tmp_path / "input"
         input_dir.mkdir()
         source = input_dir / "photo.png"
@@ -156,12 +159,10 @@ class TestRunFacePipeline:
             ],
         )
 
-        mock_pipeline = _make_mock_pipeline()
-
         # Non-interactive, no picks -> should pause after refine
         results = run_face_pipeline(
             config,
-            pipeline=mock_pipeline,
+            comfyui_url="http://test:8188",
             interactive=False,
             picks={},
         )
@@ -174,7 +175,10 @@ class TestRunFacePipeline:
         assert "refine" in state.completed_stages
         assert "angles" not in state.completed_stages
 
-    def test_resume_after_pick(self, tmp_path):
+    @patch("curation_tool.stages.run_edit")
+    def test_resume_after_pick(self, mock_run_edit, tmp_path):
+        mock_run_edit.return_value = [Image.new("RGB", (64, 64), color=(255, 0, 0))]
+
         input_dir = tmp_path / "input"
         input_dir.mkdir()
         source = input_dir / "photo.png"
@@ -201,16 +205,16 @@ class TestRunFacePipeline:
             ],
         )
 
-        mock_pipeline = _make_mock_pipeline()
-
         # First run: pauses
-        run_face_pipeline(config, pipeline=mock_pipeline, interactive=False)
+        run_face_pipeline(
+            config, comfyui_url="http://test:8188", interactive=False
+        )
 
         # Now resume with pick
         picked = output_dir / "stage_refine" / "refine_0000.png"
         results = run_face_pipeline(
             config,
-            pipeline=mock_pipeline,
+            comfyui_url="http://test:8188",
             interactive=False,
             picks={"refine": str(picked)},
         )
@@ -249,5 +253,61 @@ class TestExportFaceDataset:
         assert len(pngs) == 3
         assert len(txts) == 3
 
+        for txt in txts:
+            assert txt.read_text().strip() == "sks_sam"
+
+    def test_exports_with_caption_template(self, tmp_path):
+        """Caption template from config is used when no trigger_word override."""
+        results = []
+        src_dir = tmp_path / "stage_body"
+        src_dir.mkdir()
+        for i in range(2):
+            img_path = src_dir / f"body_{i:04d}.png"
+            Image.new("RGB", (64, 64)).save(img_path)
+            results.append({
+                "stage": "body",
+                "output_path": str(img_path),
+                "prompt": f"full body pose {i}",
+                "seed": 42 + i,
+            })
+
+        config = FacePipelineConfig(
+            trigger_word="sks_sam",
+            caption_template="{prompt}",
+            output_dir=str(tmp_path),
+            stages=[StageConfig(name="body", type="body", prompts=["a"])],
+        )
+
+        # trigger_word takes precedence (same as basic workflow)
+        export_dir = export_face_dataset(config, results)
+        txts = sorted(export_dir.glob("*.txt"))
+        assert len(txts) == 2
+        for txt in txts:
+            assert txt.read_text().strip() == "sks_sam"
+
+    def test_exports_with_caption_template_override(self, tmp_path):
+        """CLI caption_template override works when passed explicitly."""
+        results = []
+        src_dir = tmp_path / "stage_body"
+        src_dir.mkdir()
+        for i in range(2):
+            img_path = src_dir / f"body_{i:04d}.png"
+            Image.new("RGB", (64, 64)).save(img_path)
+            results.append({
+                "stage": "body",
+                "output_path": str(img_path),
+                "prompt": f"full body pose {i}",
+                "seed": 42 + i,
+            })
+
+        config = FacePipelineConfig(
+            trigger_word="sks_sam",
+            output_dir=str(tmp_path),
+            stages=[StageConfig(name="body", type="body", prompts=["a"])],
+        )
+
+        # trigger_word still takes precedence via export_lora_dataset logic
+        export_dir = export_face_dataset(config, results, caption_template="{prompt}")
+        txts = sorted(export_dir.glob("*.txt"))
         for txt in txts:
             assert txt.read_text().strip() == "sks_sam"

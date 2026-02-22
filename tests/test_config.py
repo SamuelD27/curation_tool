@@ -1,6 +1,6 @@
 """Tests for curation job configuration."""
 import pytest
-from curation_tool.config import CurationJob, EditTask
+from curation_tool.config import ComfyUISettings, CurationJob, EditTask, WorkflowSettings
 
 
 def test_edit_task_minimal():
@@ -35,3 +35,27 @@ tasks:
 def test_curation_job_validates_empty_tasks():
     with pytest.raises(ValueError):
         CurationJob(input_dir=".", output_dir=".", tasks=[])
+
+
+def test_comfyui_settings_defaults():
+    settings = ComfyUISettings()
+    assert settings.host == "127.0.0.1"
+    assert settings.port == 8188
+    assert settings.url == "http://127.0.0.1:8188"
+
+
+def test_workflow_settings_defaults():
+    settings = WorkflowSettings()
+    assert settings.template == "pulid_identity"
+    assert settings.face_restore is True
+
+
+def test_curation_job_has_comfyui_settings():
+    job = CurationJob(
+        input_dir=".",
+        output_dir=".",
+        tasks=[EditTask(source_image="a.png", prompt="test")],
+    )
+    assert job.comfyui.url == "http://127.0.0.1:8188"
+    assert job.default_num_steps == 30
+    assert job.default_cfg_scale == 3.5

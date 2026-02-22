@@ -1,66 +1,79 @@
-"""Gradio GUI for Qwen-Image-Edit-2509 image editing."""
+"""Gradio GUI for image editing with ComfyUI backend."""
 import logging
-import tempfile
 import time
 from pathlib import Path
 
 import gradio as gr
 from PIL import Image
 
+from curation_tool.comfyui_client import ComfyUIClient
 from curation_tool.face_pipeline import FacePipelineConfig, export_face_dataset
-from curation_tool.pipeline import load_pipeline, run_edit
+from curation_tool.pipeline import run_edit
 from curation_tool.presets import PRESETS
 from curation_tool.stages import StageConfig, run_stage
 
 logger = logging.getLogger(__name__)
 
-_pipeline = None
+_comfyui_url = "http://127.0.0.1:8188"
 
 
-def _ensure_pipeline(progress=None, model_id: str = "ovedrive/Qwen-Image-Edit-2509-4bit"):
-    global _pipeline
-    if _pipeline is None:
-        if progress:
-            progress(0, desc="Loading model (first run only)...")
-        _pipeline = load_pipeline(model_id=model_id)
-    return _pipeline
+def _check_comfyui(url: str) -> str:
+    """Return status string for the ComfyUI connection."""
+    client = ComfyUIClient(base_url=url)
+    try:
+        if client.health_check():
+            stats = client.get_system_stats()
+            devices = stats.get("devices", [])
+            if devices:
+                dev = devices[0]
+                vram = dev.get("vram_used", 0) / 1e6
+                vram_total = dev.get("vram_total", 0) / 1e6
+                return f"Connected ({dev.get('name', 'GPU')}: {vram:.0f}/{vram_total:.0f} MB)"
+            return "Connected"
+        return "Not reachable"
+    except Exception as e:
+        return f"Error: {e}"
+    finally:
+        client.close()
 
 
 def generate(
+    comfyui_url: str,
     image1: Image.Image | None,
-    image2: Image.Image | None,
-    image3: Image.Image | None,
     prompt: str,
     negative_prompt: str,
     seed: int,
     num_steps: int,
     cfg_scale: float,
-    guidance_scale: float,
     num_images: int,
+    template: str,
+    identity_strength: float,
     progress=gr.Progress(track_tqdm=True),
 ) -> list[Image.Image]:
-    images = [img.convert("RGB") for img in [image1, image2, image3] if img is not None]
-    if not images:
-        raise gr.Error("Upload at least one reference image.")
     if not prompt.strip():
-        raise gr.Error("Enter an edit prompt.")
+        raise gr.Error("Enter a scene description prompt.")
 
-    pipeline = _ensure_pipeline(progress=progress)
+    url = comfyui_url.strip() or _comfyui_url
+
+    ref_image = image1.convert("RGB") if image1 is not None else None
+    images = [ref_image] if ref_image else []
 
     num_images = int(num_images)
     progress(0, desc=f"Generating {num_images} image(s) ({int(num_steps)} steps)...")
     start = time.time()
 
     results = run_edit(
-        pipeline=pipeline,
         images=images,
         prompt=prompt,
         seed=int(seed),
         num_steps=int(num_steps),
         cfg_scale=cfg_scale,
-        guidance_scale=guidance_scale,
-        negative_prompt=negative_prompt.strip() or " ",
+        negative_prompt=negative_prompt.strip() or "",
         num_images=num_images,
+        template=template,
+        reference_image=ref_image,
+        identity_strength=identity_strength,
+        comfyui_url=url,
     )
 
     elapsed = time.time() - start
@@ -72,6 +85,7 @@ def generate(
 
 
 def run_refine_stage(
+    comfyui_url: str,
     base_image: Image.Image | None,
     output_dir: str,
     prompt: str,
@@ -79,6 +93,7 @@ def run_refine_stage(
     seed: int,
     steps: int,
     cfg: float,
+    template: str,
     progress=gr.Progress(track_tqdm=True),
 ) -> tuple[list[str], dict, str]:
     """Run the refine stage and return candidate images for gallery."""
@@ -87,8 +102,7 @@ def run_refine_stage(
     if not prompt.strip():
         raise gr.Error("Enter a refine prompt.")
 
-    pipeline = _ensure_pipeline(progress=progress)
-
+    url = comfyui_url.strip() or _comfyui_url
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -105,16 +119,17 @@ def run_refine_stage(
         num_candidates=int(num_candidates),
     )
 
-    progress(0, desc=f"Refining {int(num_candidates)} candidate(s)...")
+    progress(0, desc=f"Refining {int(num_candidates)} candidate(s) ({template})...")
     results = run_stage(
         stage,
         source_image_path=base_path,
         input_dir=input_dir,
         output_dir=out,
-        pipeline=pipeline,
+        comfyui_url=url,
         base_seed=int(seed),
         default_num_steps=int(steps),
         default_cfg_scale=cfg,
+        template=template,
     )
 
     gallery_images = [r["output_path"] for r in results]
@@ -123,9 +138,11 @@ def run_refine_stage(
         "angle_results": [],
         "stage_dir": str(out),
         "refine_results": results,
+        "comfyui_url": url,
+        "template": template,
     }
 
-    status = f"Refine complete: {len(results)} candidates generated."
+    status = f"Refine complete: {len(results)} candidates generated ({template})."
     return gallery_images, state, status
 
 
@@ -156,8 +173,8 @@ def run_angles_stage(
     if not state or not state.get("picked_image_path"):
         raise gr.Error("Pick a refine candidate first.")
 
-    pipeline = _ensure_pipeline(progress=progress)
-
+    url = state.get("comfyui_url", _comfyui_url)
+    template = state.get("template", "qwen_face_edit")
     picked_path = Path(state["picked_image_path"])
     out = Path(state["stage_dir"])
 
@@ -168,22 +185,23 @@ def run_angles_stage(
     )
 
     num_prompts = len(PRESETS[preset])
-    progress(0, desc=f"Generating {num_prompts} angle variations...")
+    progress(0, desc=f"Generating {num_prompts} angle variations ({template})...")
     results = run_stage(
         stage,
         source_image_path=picked_path,
         input_dir=picked_path.parent,
         output_dir=out,
-        pipeline=pipeline,
+        comfyui_url=url,
         base_seed=int(seed),
         default_num_steps=int(steps),
         default_cfg_scale=cfg,
+        template=template,
     )
 
     gallery_images = [r["output_path"] for r in results]
     state = {**state, "angle_results": results}
 
-    status = f"Angles complete: {len(results)} variations generated."
+    status = f"Angles complete: {len(results)} variations generated ({template})."
     return gallery_images, state, status
 
 
@@ -210,28 +228,50 @@ def export_dataset(
 
 
 def build_app() -> gr.Blocks:
-    with gr.Blocks(title="Qwen-Image-Edit Curation Tool") as app:
+    with gr.Blocks(title="Curation Tool (ComfyUI Backend)") as app:
         with gr.Tabs():
-            # --- Single Edit tab (existing UI) ---
+            # --- Single Edit tab ---
             with gr.Tab("Single Edit"):
                 gr.Markdown(
-                    "# Qwen-Image-Edit-2509\n"
-                    "Upload 1-3 reference images + prompt. First run loads model (~2 min)."
+                    "# Curation Tool (ComfyUI Backend)\n"
+                    "Generate images via Flux + PuLID identity preservation."
+                )
+
+                with gr.Row():
+                    comfyui_url_input = gr.Textbox(
+                        label="ComfyUI URL",
+                        value=_comfyui_url,
+                        scale=3,
+                    )
+                    status_btn = gr.Button("Check Status", scale=1)
+                    status_text = gr.Textbox(
+                        label="Status",
+                        interactive=False,
+                        scale=2,
+                    )
+
+                status_btn.click(
+                    fn=_check_comfyui,
+                    inputs=[comfyui_url_input],
+                    outputs=[status_text],
                 )
 
                 with gr.Row():
                     with gr.Column(scale=1):
-                        img1 = gr.Image(label="Image 1 (required)", type="pil")
-                        img2 = gr.Image(label="Image 2 (optional)", type="pil")
-                        img3 = gr.Image(label="Image 3 (optional)", type="pil")
+                        img1 = gr.Image(label="Reference Image (optional, for PuLID)", type="pil")
                         prompt = gr.Textbox(
-                            label="Edit Prompt", lines=3,
-                            placeholder="Describe the edit you want...",
+                            label="Scene Description Prompt", lines=3,
+                            placeholder="Professional headshot portrait, soft studio lighting...",
                         )
                         negative_prompt = gr.Textbox(
                             label="Negative Prompt",
                             lines=2,
-                            value="blurry, low quality, distorted, deformed, artifacts",
+                            value="",
+                        )
+                        template = gr.Dropdown(
+                            label="Workflow Template",
+                            choices=["flux_base", "flux2_base", "pulid_identity", "qwen_face_edit"],
+                            value="qwen_face_edit",
                         )
                         with gr.Row():
                             seed = gr.Number(label="Seed", value=0, precision=0)
@@ -240,16 +280,17 @@ def build_app() -> gr.Blocks:
                             )
                         with gr.Row():
                             steps = gr.Slider(
-                                label="Steps", minimum=1, maximum=100, value=50, step=1,
+                                label="Steps", minimum=1, maximum=100, value=30, step=1,
                             )
                             cfg = gr.Slider(
-                                label="True CFG Scale", minimum=1.0, maximum=15.0,
-                                value=4.0, step=0.5,
+                                label="Guidance Scale", minimum=1.0, maximum=15.0,
+                                value=3.5, step=0.5,
                             )
-                            guidance = gr.Slider(
-                                label="Guidance Scale", minimum=0.0, maximum=10.0,
-                                value=1.0, step=0.5,
-                            )
+                        identity_strength = gr.Slider(
+                            label="Identity Strength (PuLID)",
+                            minimum=0.0, maximum=1.5, value=0.8, step=0.05,
+                            visible=True,
+                        )
                         generate_btn = gr.Button("Generate", variant="primary")
 
                     with gr.Column(scale=1):
@@ -258,8 +299,8 @@ def build_app() -> gr.Blocks:
                 generate_btn.click(
                     fn=generate,
                     inputs=[
-                        img1, img2, img3, prompt, negative_prompt,
-                        seed, steps, cfg, guidance, num_images,
+                        comfyui_url_input, img1, prompt, negative_prompt,
+                        seed, steps, cfg, num_images, template, identity_strength,
                     ],
                     outputs=output,
                 )
@@ -267,7 +308,7 @@ def build_app() -> gr.Blocks:
             # --- Face Pipeline tab ---
             with gr.Tab("Face Pipeline"):
                 gr.Markdown(
-                    "# Face Pipeline\n"
+                    "# Face Pipeline (ComfyUI)\n"
                     "Refine -> Pick -> Angles -> Export. "
                     "Generate a LoRA training dataset from a single photo."
                 )
@@ -277,7 +318,14 @@ def build_app() -> gr.Blocks:
                     "angle_results": [],
                     "stage_dir": "",
                     "refine_results": [],
+                    "comfyui_url": _comfyui_url,
+                    "template": "qwen_face_edit",
                 })
+
+                with gr.Row():
+                    fp_comfyui_url = gr.Textbox(
+                        label="ComfyUI URL", value=_comfyui_url,
+                    )
 
                 with gr.Row():
                     # Left column: controls
@@ -291,10 +339,16 @@ def build_app() -> gr.Blocks:
                         fp_trigger_word = gr.Textbox(
                             label="Trigger Word", value="sks_person",
                         )
+                        fp_template = gr.Dropdown(
+                            label="Workflow",
+                            choices=["qwen_face_edit", "pulid_identity", "flux2_base"],
+                            value="qwen_face_edit",
+                        )
                         fp_refine_prompt = gr.Textbox(
                             label="Refine Prompt", lines=3,
-                            value="Improve this photo to a perfect professional headshot, "
-                                  "sharp focus, studio lighting, neutral background",
+                            value="Professional headshot portrait, facing directly forward, "
+                                  "centered composition, sharp focus, studio lighting, "
+                                  "clean neutral background, 85mm lens",
                         )
                         fp_num_candidates = gr.Slider(
                             label="Num Candidates", minimum=1, maximum=8,
@@ -304,11 +358,11 @@ def build_app() -> gr.Blocks:
                         with gr.Row():
                             fp_steps = gr.Slider(
                                 label="Steps", minimum=1, maximum=100,
-                                value=50, step=1,
+                                value=6, step=1,
                             )
                             fp_cfg = gr.Slider(
-                                label="CFG Scale", minimum=1.0, maximum=15.0,
-                                value=4.0, step=0.5,
+                                label="Guidance Scale", minimum=1.0, maximum=15.0,
+                                value=3.5, step=0.5,
                             )
 
                         fp_refine_btn = gr.Button("Run Refine", variant="primary")
@@ -316,7 +370,7 @@ def build_app() -> gr.Blocks:
                         fp_preset = gr.Dropdown(
                             label="Preset",
                             choices=list(PRESETS.keys()),
-                            value="headshot_20",
+                            value="qwen_headshot_20",
                         )
                         fp_angles_btn = gr.Button(
                             "Generate Angles", interactive=False,
@@ -342,12 +396,39 @@ def build_app() -> gr.Blocks:
                             label="Status", interactive=False, lines=3,
                         )
 
+                # Update defaults when workflow template changes
+                def _on_template_change(tmpl):
+                    if tmpl == "pulid_identity":
+                        return (
+                            gr.update(value=30),         # steps
+                            gr.update(value=3.5),        # cfg
+                            gr.update(value="pulid_headshot_20"),  # preset
+                        )
+                    elif tmpl == "flux2_base":
+                        return (
+                            gr.update(value=28),          # steps
+                            gr.update(value=3.0),         # cfg (FluxGuidance)
+                            gr.update(value="flux2_headshot_20"),  # preset
+                        )
+                    else:  # qwen_face_edit
+                        return (
+                            gr.update(value=6),           # steps
+                            gr.update(value=3.5),         # cfg
+                            gr.update(value="qwen_headshot_20"),  # preset
+                        )
+
+                fp_template.change(
+                    fn=_on_template_change,
+                    inputs=[fp_template],
+                    outputs=[fp_steps, fp_cfg, fp_preset],
+                )
+
                 # Wire up events
                 fp_refine_btn.click(
                     fn=run_refine_stage,
                     inputs=[
-                        fp_base_image, fp_output_dir, fp_refine_prompt,
-                        fp_num_candidates, fp_seed, fp_steps, fp_cfg,
+                        fp_comfyui_url, fp_base_image, fp_output_dir, fp_refine_prompt,
+                        fp_num_candidates, fp_seed, fp_steps, fp_cfg, fp_template,
                     ],
                     outputs=[fp_refine_gallery, fp_state, fp_status],
                 ).then(
@@ -382,9 +463,15 @@ def build_app() -> gr.Blocks:
     return app
 
 
-def launch(host: str = "0.0.0.0", port: int = 7860, share: bool = False):
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    logger.info("Starting Gradio app on %s:%d", host, port)
+def launch(
+    host: str = "0.0.0.0",
+    port: int = 7860,
+    share: bool = False,
+    comfyui_url: str = "http://127.0.0.1:8188",
+):
+    global _comfyui_url
+    _comfyui_url = comfyui_url
+    logger.info("Starting Gradio app on %s:%d (ComfyUI: %s)", host, port, comfyui_url)
     app = build_app()
     app.launch(
         server_name=host,
